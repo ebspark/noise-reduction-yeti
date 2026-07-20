@@ -33,11 +33,30 @@ python3 denoise.py voice.m4a
 python3 denoise.py recording.mp4 -o out.mp4     # choose output path
 python3 denoise.py recording.mp4 -s 0.9         # gentler (default 1.0 = remove all)
 python3 denoise.py recording.mp4 -n new_hiss.m4a  # use a fresh noise recording
+python3 denoise.py recording.mp4 -n auto        # learn the hiss from the file's
+                                                # own quiet pauses
 ```
+
+`-n auto` needs no noise recording at all: it finds the quietest 20% of the
+file (the pauses between words) and uses that as the profile. Use it whenever
+the gain knob has moved since the bundled profile was recorded — a mismatched
+knob position changes the hiss level, and the auto profile tracks it exactly.
 
 `-s / --strength` controls how much of the hiss is removed. `1.0` removes it
 completely; if that ever sounds too processed ("underwater" tails on words),
 try `0.9`, which leaves a whisper of room tone and sounds more natural.
+
+## Gain knob findings (tested Jul 2026)
+
+Experiments with this rig showed the hiss comes from the USB hub's power,
+not the mic's preamp, so the gain knob barely affects it:
+
+- Gain at zero removed ~6 dB of hiss but ~30 dB of voice — recordings made
+  that way are unrecoverable (denoising + boosting leaves heavy artifacts).
+- The mute button produces pure digital silence, not ambient audio.
+- The sweet spot: set gain so your voice peaks around −10 dB. That gives
+  ~35 dB of voice-over-hiss separation, and the script then drops the hiss
+  below −90 dB with no audible artifacts.
 
 ## If the noise changes
 

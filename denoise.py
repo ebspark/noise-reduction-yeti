@@ -15,6 +15,8 @@ Usage:
     python3 denoise.py voice.m4a -o clean.m4a
     python3 denoise.py video.mp4 --strength 0.9      # gentler, keeps some room tone
     python3 denoise.py video.mp4 --noise new_hiss.m4a
+    python3 denoise.py video.mp4 --noise auto        # learn the hiss from the
+                                                     # recording's own quiet pauses
 
 Requires: ffmpeg on PATH, and `pip install -r requirements.txt`.
 """
@@ -68,6 +70,23 @@ def decode_to_wav(src: Path, dst: Path, sample_rate: int | None = None) -> None:
     run(cmd)
 
 
+def auto_noise_profile(speech: np.ndarray, sr: int) -> np.ndarray:
+    """Build a noise profile from the quietest 20% of 100 ms windows.
+
+    Works because the hiss is constant, so the pauses between words contain
+    pure noise. Robust to gain-knob changes, unlike a pre-recorded profile.
+    """
+    mono = speech.mean(axis=1)
+    w = sr // 10
+    n = len(mono) // w
+    if n < 10:
+        sys.exit("--noise auto needs at least ~1s of audio")
+    rms = np.array([np.sqrt(np.mean(mono[i * w:(i + 1) * w] ** 2)) for i in range(n)])
+    thresh = np.percentile(rms, 20)
+    quiet = [i for i in range(n) if rms[i] <= thresh]
+    return np.concatenate([speech[i * w:(i + 1) * w] for i in quiet])
+
+
 def reduce(speech: np.ndarray, noise: np.ndarray, sr: int, strength: float) -> np.ndarray:
     if speech.ndim == 1:
         speech = speech[:, None]
@@ -88,17 +107,21 @@ def main() -> None:
     ap.add_argument("input", type=Path, help="video or audio file to clean")
     ap.add_argument("-o", "--output", type=Path,
                     help="output path (default: <input>_clean.<ext>)")
-    ap.add_argument("-n", "--noise", type=Path, default=DEFAULT_NOISE,
-                    help="recording of just the noise (default: bundled hiss profile)")
+    ap.add_argument("-n", "--noise", default=str(DEFAULT_NOISE),
+                    help="recording of just the noise, or 'auto' to learn the hiss "
+                         "from the input's own quiet pauses — use auto whenever the "
+                         "gain knob has moved (default: bundled hiss profile)")
     ap.add_argument("-s", "--strength", type=float, default=1.0,
                     help="how much of the noise to remove, 0-1 (default 1.0; "
                          "try 0.9 if full strength sounds too processed)")
     args = ap.parse_args()
 
+    auto = args.noise == "auto"
+    noise_path = None if auto else Path(args.noise)
     if not args.input.exists():
         sys.exit(f"input not found: {args.input}")
-    if not args.noise.exists():
-        sys.exit(f"noise profile not found: {args.noise}")
+    if noise_path and not noise_path.exists():
+        sys.exit(f"noise profile not found: {noise_path}")
     if not 0.0 < args.strength <= 1.0:
         sys.exit("--strength must be in (0, 1]")
 
@@ -111,11 +134,15 @@ def main() -> None:
 
         decode_to_wav(args.input, speech_wav)
         speech, sr = sf.read(speech_wav, always_2d=True)
-        decode_to_wav(args.noise, noise_wav, sample_rate=sr)
-        noise, _ = sf.read(noise_wav, always_2d=True)
+        if auto:
+            noise = auto_noise_profile(speech, sr)
+        else:
+            decode_to_wav(noise_path, noise_wav, sample_rate=sr)
+            noise, _ = sf.read(noise_wav, always_2d=True)
 
         print(f"denoising {args.input.name}: {speech.shape[0]/sr:.1f}s, "
-              f"{sr} Hz, {speech.shape[1]} ch, strength {args.strength}")
+              f"{sr} Hz, {speech.shape[1]} ch, strength {args.strength}, "
+              f"profile {'auto' if auto else noise_path.name}")
         sf.write(clean_wav, reduce(speech, noise, sr, args.strength), sr)
 
         if video:
