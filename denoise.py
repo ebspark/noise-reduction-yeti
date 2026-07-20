@@ -17,6 +17,8 @@ Usage:
     python3 denoise.py video.mp4 --noise new_hiss.m4a
     python3 denoise.py video.mp4 --noise auto        # learn the hiss from the
                                                      # recording's own quiet pauses
+    python3 denoise.py video.mp4 --polish            # + broadcast-style voice mix:
+                                                     # EQ, de-ess, compress, -16 LUFS
 
 Requires: ffmpeg on PATH, and `pip install -r requirements.txt`.
 """
@@ -38,6 +40,16 @@ DEFAULT_NOISE = REPO_DIR / "noise_profile.flac"
 # Extensions we hand back as AAC-in-MP4-container audio; everything else
 # that's audio-only comes back as the same extension via ffmpeg.
 VIDEO_AUDIO_CODEC = ["-c:a", "aac", "-b:a", "192k"]
+
+# Voice polish: rumble cut, de-ess, box cut at 250 Hz, presence at 3.5 kHz,
+# air at 8 kHz, 3:1 leveling compression, normalize to -16 LUFS (podcast spec).
+POLISH_CHAIN = (
+    "highpass=f=75,deesser,"
+    "equalizer=f=250:t=q:w=1.2:g=-2,equalizer=f=3500:t=q:w=1.2:g=2.5,"
+    "treble=g=1.5:f=8000,"
+    "acompressor=threshold=-26dB:ratio=3:attack=8:release=140:makeup=4,"
+    "loudnorm=I=-16:TP=-1.5:LRA=9"
+)
 
 
 def run(cmd: list[str]) -> None:
@@ -111,6 +123,10 @@ def main() -> None:
                     help="recording of just the noise, or 'auto' to learn the hiss "
                          "from the input's own quiet pauses — use auto whenever the "
                          "gain knob has moved (default: bundled hiss profile)")
+    ap.add_argument("-p", "--polish", action="store_true",
+                    help="after denoising, apply a voice mix chain (EQ, de-esser, "
+                         "compression, loudness normalization to -16 LUFS) and "
+                         "downmix to mono — fixes flat/'cheap'-sounding voice")
     ap.add_argument("-s", "--strength", type=float, default=1.0,
                     help="how much of the noise to remove, 0-1 (default 1.0; "
                          "try 0.9 if full strength sounds too processed)")
@@ -145,16 +161,18 @@ def main() -> None:
               f"profile {'auto' if auto else noise_path.name}")
         sf.write(clean_wav, reduce(speech, noise, sr, args.strength), sr)
 
+        polish = ["-ac", "1", "-af", POLISH_CHAIN, "-ar", str(sr)] if args.polish else []
         if video:
             run(["ffmpeg", "-v", "error", "-y",
                  "-i", str(args.input), "-i", str(clean_wav),
                  "-map", "0:v", "-map", "1:a", "-c:v", "copy",
-                 *VIDEO_AUDIO_CODEC, str(out_path)])
+                 *polish, *VIDEO_AUDIO_CODEC, str(out_path)])
         elif out_path.suffix.lower() in {".wav", ".flac"}:
-            run(["ffmpeg", "-v", "error", "-y", "-i", str(clean_wav), str(out_path)])
+            run(["ffmpeg", "-v", "error", "-y", "-i", str(clean_wav),
+                 *polish, str(out_path)])
         else:
             run(["ffmpeg", "-v", "error", "-y", "-i", str(clean_wav),
-                 *VIDEO_AUDIO_CODEC, str(out_path)])
+                 *polish, *VIDEO_AUDIO_CODEC, str(out_path)])
 
     print(f"wrote {out_path}")
 

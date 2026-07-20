@@ -35,7 +35,14 @@ python3 denoise.py recording.mp4 -s 0.9         # gentler (default 1.0 = remove 
 python3 denoise.py recording.mp4 -n new_hiss.m4a  # use a fresh noise recording
 python3 denoise.py recording.mp4 -n auto        # learn the hiss from the file's
                                                 # own quiet pauses
+python3 denoise.py recording.mp4 -p             # + polish: EQ, de-esser,
+                                                # compression, -16 LUFS loudness
 ```
+
+`-p / --polish` fixes a flat, "cheap"-sounding voice after denoising: it
+downmixes to mono, cuts rumble below 75 Hz and boxiness at 250 Hz, adds
+presence at 3.5 kHz and air at 8 kHz, de-esses, evens out levels with 3:1
+compression, and normalizes to the −16 LUFS podcast standard.
 
 `-n auto` needs no noise recording at all: it finds the quietest 20% of the
 file (the pauses between words) and uses that as the profile. Use it whenever
